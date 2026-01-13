@@ -12,6 +12,15 @@ import logging
 import argparse
 import numpy as np
 import soundfile as sf
+
+# Fix PIL.Image.ANTIALIAS compatibility for Pillow 10.0+
+try:
+    from PIL import Image
+    if not hasattr(Image, 'ANTIALIAS'):
+        Image.ANTIALIAS = Image.Resampling.LANCZOS
+except ImportError:
+    pass
+
 from moviepy.editor import *
 import moviepy.editor as mpy
 from moviepy.video.tools.subtitles import SubtitlesClip, TextClip
@@ -27,6 +36,38 @@ class VideoClipper():
         logging.warning("Initializing VideoClipper.")
         self.funasr_model = funasr_model
         self.GLOBAL_COUNT = 0
+        # Set font path relative to project root (parent of funclip directory)
+        self.font_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "font", "STHeitiMedium.ttc")
+
+    def resize_to_tiktok(self, video_clip):
+        """Resize video to TikTok format (9:16 aspect ratio, 1080x1920)"""
+        try:
+            w, h = video_clip.w, video_clip.h
+            target_w, target_h = 1080, 1920
+
+            # Calculate scaling to fit within target dimensions while maintaining aspect ratio
+            scale = min(target_w / w, target_h / h)
+            new_w = int(w * scale)
+            new_h = int(h * scale)
+
+            # Resize video
+            video_clip = video_clip.resize((new_w, new_h))
+
+            # Add padding to center the video (black bars)
+            pad_x = (target_w - new_w) // 2
+            pad_y = (target_h - new_h) // 2
+
+            # Create background (black) and composite
+            background = mpy.ColorClip(size=(target_w, target_h), color=(0, 0, 0), duration=video_clip.duration)
+            video_clip = mpy.CompositeVideoClip([background, video_clip.set_position((pad_x, pad_y))], size=(target_w, target_h))
+            video_clip.duration = video_clip.clips[0].duration  # Ensure duration is set
+
+            logging.info("Video resized to TikTok format (1080x1920)")
+            return video_clip
+        except Exception as e:
+            logging.error(f"Error resizing to TikTok format: {str(e)}")
+            return video_clip  # Return original if resize fails
+
 
     def recog(self, audio_input, sd_switch='no', state=None, hotwords="", output_dir=None):
         if state is None:
@@ -44,23 +85,23 @@ class VideoClipper():
             data = data[:,0]
         state['audio_input'] = (sr, data)
         if sd_switch == 'Yes':
-            rec_result = self.funasr_model.generate(data, 
+            rec_result = self.funasr_model.generate(data,
                                                     return_spk_res=True,
-                                                    return_raw_text=True, 
+                                                    return_raw_text=True,
                                                     is_final=True,
-                                                    output_dir=output_dir, 
-                                                    hotword=hotwords, 
+                                                    output_dir=output_dir,
+                                                    hotword=hotwords,
                                                     pred_timestamp=self.lang=='en',
                                                     en_post_proc=self.lang=='en',
                                                     cache={})
             res_srt = generate_srt(rec_result[0]['sentence_info'])
             state['sd_sentences'] = rec_result[0]['sentence_info']
         else:
-            rec_result = self.funasr_model.generate(data, 
-                                                    return_spk_res=False, 
-                                                    sentence_timestamp=True, 
-                                                    return_raw_text=True, 
-                                                    is_final=True, 
+            rec_result = self.funasr_model.generate(data,
+                                                    return_spk_res=False,
+                                                    sentence_timestamp=True,
+                                                    return_raw_text=True,
+                                                    is_final=True,
                                                     hotword=hotwords,
                                                     output_dir=output_dir,
                                                     pred_timestamp=self.lang=='en',
@@ -170,17 +211,18 @@ class VideoClipper():
         # res_text, res_srt = self.recog((16000, wav), state)
         return self.recog((16000, wav), sd_switch, state, hotwords, output_dir)
 
-    def video_clip(self, 
-                   dest_text, 
-                   start_ost, 
-                   end_ost, 
-                   state, 
-                   font_size=32, 
-                   font_color='white', 
-                   add_sub=False, 
-                   dest_spk=None, 
+    def video_clip(self,
+                   dest_text,
+                   start_ost,
+                   end_ost,
+                   state,
+                   font_size=32,
+                   font_color='white',
+                   add_sub=False,
+                   dest_spk=None,
                    output_dir=None,
                    timestamp_list=None):
+        logging.info(f"[DEBUG_VIDEO_CLIP_START] add_sub={add_sub}, has_ts_list={timestamp_list is not None}")
         # get from state
         recog_res_raw = state['recog_res_raw']
         timestamp = state['timestamp']
@@ -188,7 +230,7 @@ class VideoClipper():
         video = state['video']
         clip_video_file = state['clip_video_file']
         video_filename = state['video_filename']
-        
+
         if timestamp_list is None:
             all_ts = []
             if dest_spk is None or dest_spk == '' or 'sd_sentences' not in state:
@@ -217,13 +259,16 @@ class VideoClipper():
                     ts = proc_spk(_dest_spk, state['sd_sentences'])
                     for _ts in ts: all_ts.append(_ts)
         else:  # AI clip pass timestamp as input directly
+            logging.info(f"[DEBUG_VIDEO_CLIP_TS_CONVERT] Converting {len(timestamp_list)} timestamps")
             all_ts = [[i[0]*16.0, i[1]*16.0] for i in timestamp_list]
-        
+            logging.info(f"[DEBUG_VIDEO_CLIP_ALL_TS] Result: {all_ts}")
+
         srt_index = 0
         time_acc_ost = 0.0
         ts = all_ts
         # ts.sort()
         clip_srt = ""
+        logging.info(f"[DEBUG_VIDEO_CLIP_FINAL_TS] len(ts)={len(ts)}")
         if len(ts):
             if self.lang == 'en' and isinstance(sentences, str):
                 sentences = sentences.split()
@@ -234,9 +279,13 @@ class VideoClipper():
             start_end_info = "from {} to {}".format(start, end)
             clip_srt += srt_clip
             if add_sub:
-                generator = lambda txt: TextClip(txt, font='./font/STHeitiMedium.ttc', fontsize=font_size, color=font_color)
-                subtitles = SubtitlesClip(subs, generator)
-                video_clip = CompositeVideoClip([video_clip, subtitles.set_pos(('center','bottom'))])
+                try:
+                    generator = lambda txt: TextClip(txt, font=self.font_path, fontsize=font_size, color=font_color)
+                    subtitles = SubtitlesClip(subs, generator)
+                    video_clip = CompositeVideoClip([video_clip, subtitles.set_pos(('center','bottom'))])
+                except Exception as e:
+                    logging.error(f"Error adding subtitles: {str(e)}, continuing without subtitles")
+                    # Continue without subtitles if there's an error
             concate_clip = [video_clip]
             time_acc_ost += end+end_ost/1000.0 - (start+start_ost/1000.0)
             for _ts in ts[1:]:
@@ -253,9 +302,13 @@ class VideoClipper():
                 start_end_info += ", from {} to {}".format(str(start)[:5], str(end)[:5])
                 clip_srt += srt_clip
                 if add_sub:
-                    generator = lambda txt: TextClip(txt, font='./font/STHeitiMedium.ttc', fontsize=font_size, color=font_color)
-                    subtitles = SubtitlesClip(chi_subs, generator)
-                    _video_clip = CompositeVideoClip([_video_clip, subtitles.set_pos(('center','bottom'))])
+                    try:
+                        generator = lambda txt: TextClip(txt, font=self.font_path, fontsize=font_size, color=font_color)
+                        subtitles = SubtitlesClip(chi_subs, generator)
+                        _video_clip = CompositeVideoClip([_video_clip, subtitles.set_pos(('center','bottom'))])
+                    except Exception as e:
+                        logging.error(f"Error adding subtitles to segment: {str(e)}, continuing without subtitles")
+                        # Continue without subtitles if there's an error
                     # _video_clip.write_videofile("debug.mp4", audio_codec="aac")
                 concate_clip.append(copy.copy(_video_clip))
                 time_acc_ost += end+end_ost/1000.0 - (start+start_ost/1000.0)
@@ -263,17 +316,20 @@ class VideoClipper():
             logging.warning("Concating...")
             if len(concate_clip) > 1:
                 video_clip = concatenate_videoclips(concate_clip)
-            # clip_video_file = clip_video_file[:-4] + '_no{}.mp4'.format(self.GLOBAL_COUNT)
-            if output_dir is not None:
-                os.makedirs(output_dir, exist_ok=True)
-                _, file_with_extension = os.path.split(clip_video_file)
-                clip_video_file_name, _ = os.path.splitext(file_with_extension)
-                print(output_dir, clip_video_file)
-                clip_video_file = os.path.join(output_dir, "{}_no{}.mp4".format(clip_video_file_name, self.GLOBAL_COUNT))
-                temp_audio_file = os.path.join(output_dir, "{}_tempaudio_no{}.mp4".format(clip_video_file_name, self.GLOBAL_COUNT))
-            else:
-                clip_video_file = clip_video_file[:-4] + '_no{}.mp4'.format(self.GLOBAL_COUNT)
-                temp_audio_file = clip_video_file[:-4] + '_tempaudio_no{}.mp4'.format(self.GLOBAL_COUNT)
+
+            # Resize to TikTok format (9:16 aspect ratio)
+            video_clip = self.resize_to_tiktok(video_clip)
+
+            # Default output folder: ./clips (in FunClip directory)
+            if output_dir is None or not output_dir.strip():
+                output_dir = os.path.join(os.getcwd(), "clips")
+
+            os.makedirs(output_dir, exist_ok=True)
+            _, file_with_extension = os.path.split(clip_video_file)
+            clip_video_file_name, _ = os.path.splitext(file_with_extension)
+            print(f"Saving clip to: {output_dir}")
+            clip_video_file = os.path.join(output_dir, "{}_no{}.mp4".format(clip_video_file_name, self.GLOBAL_COUNT))
+            temp_audio_file = os.path.join(output_dir, "{}_tempaudio_no{}.mp4".format(clip_video_file_name, self.GLOBAL_COUNT))
             video_clip.write_videofile(clip_video_file, audio_codec="aac", temp_audiofile=temp_audio_file)
             self.GLOBAL_COUNT += 1
         else:
@@ -378,7 +434,7 @@ def runner(stage, file, sd_switch, output_dir, dest_text, dest_spk, start_ost, e
                     vad_model="damo/speech_fsmn_vad_zh-cn-16k-common-pytorch",
                     punc_model="damo/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",
                     spk_model="damo/speech_campplus_sv_zh-cn_16k-common",
-                    )
+                    disable_update=True)
             audio_clipper = VideoClipper(funasr_model)
             audio_clipper.lang = 'zh'
         elif lang == 'en':
@@ -386,7 +442,7 @@ def runner(stage, file, sd_switch, output_dir, dest_text, dest_spk, start_ost, e
                                 vad_model="damo/speech_fsmn_vad_zh-cn-16k-common-pytorch",
                                 punc_model="damo/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",
                                 spk_model="damo/speech_campplus_sv_zh-cn_16k-common",
-                                )
+                                disable_update=True)
             audio_clipper = VideoClipper(funasr_model)
             audio_clipper.lang = 'en'
         if mode == 'audio':

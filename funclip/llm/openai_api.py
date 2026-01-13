@@ -20,21 +20,16 @@ if __name__ == '__main__':
         model="gpt-3.5-turbo-0125",
     )
     print(chat_completion.choices[0].message.content)
-    
-    
-def openai_call(apikey, 
-                model="gpt-3.5-turbo", 
-                user_content="如何做西红柿炖牛腩？", 
+
+
+def openai_call(apikey,
+                model="gpt-3.5-turbo",
+                user_content="How to make tomato beef stew?",
                 system_content=None):
-    base_url = None
-    if model.startswith("deepseek"):
-        base_url = "https://api.deepseek.com"
-    elif model.startswith("gpt-3.5-turbo"):
-        base_url = "https://api.moonshot.cn/v1"
+    # All requests go to OpenAI API (api.openai.com)
     client = OpenAI(
-        # This is the default and can be omitted
-        api_key=apikey,
-        base_url=base_url
+        api_key=apikey
+        # base_url not needed - defaults to https://api.openai.com/v1
     )
     if system_content is not None and len(system_content.strip()):
         messages = [
@@ -45,13 +40,13 @@ def openai_call(apikey,
         messages = [
             {'role': 'user', 'content': user_content}
       ]
-    
+
     chat_completion = client.chat.completions.create(
         messages=messages,
         model=model,
     )
     logging.info("Openai model inference done.")
-    
+
     try:
         return chat_completion.choices[0].message.content
     except (AttributeError, IndexError) as e:

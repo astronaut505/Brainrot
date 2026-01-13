@@ -8,10 +8,10 @@ if __name__ == '__main__':
         messages=[{"role": "user", "content": "你好你的名字是什么"}],
     )
     print(response.choices[0].message.content)
- 
 
-def g4f_openai_call(model="gpt-3.5-turbo", 
-                    user_content="如何做西红柿炖牛腩？", 
+
+def g4f_openai_call(model="gpt-3.5-turbo",
+                    user_content="如何做西红柿炖牛腩？",
                     system_content=None):
     client = Client()
     if system_content is not None and len(system_content.strip()):

@@ -18,6 +18,12 @@ from introduction import top_md_1, top_md_3, top_md_4
 
 
 if __name__ == "__main__":
+    import os
+    # Suppress modelscope verbose logging
+    os.environ['MODELSCOPE_CACHE'] = os.path.expanduser('~/.cache/modelscope/hub')
+    logging.getLogger('modelscope').setLevel(logging.ERROR)
+    logging.getLogger('funasr').setLevel(logging.ERROR)
+
     parser = argparse.ArgumentParser(description='argparse testing')
     parser.add_argument('--lang', '-l', type=str, default = "zh", help="language")
     parser.add_argument('--share', '-s', action='store_true', help="if to establish gradio share link")
@@ -30,13 +36,13 @@ if __name__ == "__main__":
                                 vad_model="damo/speech_fsmn_vad_zh-cn-16k-common-pytorch",
                                 punc_model="damo/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",
                                 spk_model="damo/speech_campplus_sv_zh-cn_16k-common",
-                                )
+                                disable_update=True)
     else:
         funasr_model = AutoModel(model="iic/speech_paraformer_asr-en-16k-vocab4199-pytorch",
                                 vad_model="damo/speech_fsmn_vad_zh-cn-16k-common-pytorch",
                                 punc_model="damo/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",
                                 spk_model="damo/speech_campplus_sv_zh-cn_16k-common",
-                                )
+                                disable_update=True)
     audio_clipper = VideoClipper(funasr_model)
     audio_clipper.lang = args.lang
 
@@ -130,26 +136,36 @@ if __name__ == "__main__":
                           .format(SUPPORT_LLM_PREFIX))
 
     def AI_clip(LLM_res, dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, output_dir):
+        logging.info(f"[DEBUG_AICLIP_NOSUB_START] LLM_res: {LLM_res}")
         timestamp_list = extract_timestamps(LLM_res)
+        logging.info(f"[DEBUG_AICLIP_NOSUB_TIMESTAMPS] len: {len(timestamp_list) if timestamp_list else 0}")
         output_dir = output_dir.strip()
         if not len(output_dir):
             output_dir = None
         else:
             output_dir = os.path.abspath(output_dir)
+        logging.info(f"[DEBUG_AICLIP_NOSUB_CHECK] video: {video_state is not None}, audio: {audio_state is not None}")
         if video_state is not None:
+            logging.info("[DEBUG_AICLIP_NOSUB_VIDEO] Processing video")
             clip_video_file, message, clip_srt = audio_clipper.video_clip(
                 dest_text, start_ost, end_ost, video_state,
                 dest_spk=video_spk_input, output_dir=output_dir, timestamp_list=timestamp_list, add_sub=False)
+            logging.info(f"[DEBUG_AICLIP_NOSUB_VIDEO_RESULT] {clip_video_file}")
             return clip_video_file, None, message, clip_srt
         if audio_state is not None:
+            logging.info("[DEBUG_AICLIP_NOSUB_AUDIO] Processing audio")
             (sr, res_audio), message, clip_srt = audio_clipper.clip(
                 dest_text, start_ost, end_ost, audio_state,
                 dest_spk=video_spk_input, output_dir=output_dir, timestamp_list=timestamp_list, add_sub=False)
+            logging.info(f"[DEBUG_AICLIP_NOSUB_AUDIO_RESULT] sr={sr}")
             return None, (sr, res_audio), message, clip_srt
+        logging.warning("[DEBUG_AICLIP_NOSUB_NO_STATE] Returning fallback")
         return None, None, "Please upload video or audio first.", ""
 
     def AI_clip_subti(LLM_res, dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, output_dir):
+        logging.info(f"[DEBUG_AICLIP_WITHSUB_START] LLM_res: {LLM_res}")
         timestamp_list = extract_timestamps(LLM_res)
+        logging.info(f"[DEBUG_AICLIP_WITHSUB_TIMESTAMPS] len: {len(timestamp_list) if timestamp_list else 0}")
         output_dir = output_dir.strip()
         if not len(output_dir):
             output_dir = None

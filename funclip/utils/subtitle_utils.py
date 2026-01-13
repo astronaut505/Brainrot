@@ -30,6 +30,15 @@ class Text2SRT():
     def __init__(self, text, timestamp, offset=0):
         self.token_list = text
         self.timestamp = timestamp
+
+        # Handle empty timestamp list
+        if not timestamp or len(timestamp) == 0:
+            print(f"WARNING: Empty timestamp list for text: {text}")
+            self.start_sec, self.end_sec = 0, 0
+            self.start_time = "00:00:00,000"
+            self.end_time = "00:00:00,000"
+            return
+
         start, end = timestamp[0][0] - offset, timestamp[-1][1] - offset
         self.start_sec, self.end_sec = start, end
         self.start_time = time_convert(start)
@@ -48,7 +57,7 @@ class Text2SRT():
     def srt(self, acc_ost=0.0):
         return "{} --> {}\n{}\n".format(
             time_convert(self.start_sec+acc_ost*1000),
-            time_convert(self.end_sec+acc_ost*1000), 
+            time_convert(self.end_sec+acc_ost*1000),
             self.text())
     def time(self, acc_ost=0.0):
         return (self.start_sec/1000+acc_ost, self.end_sec/1000+acc_ost)
