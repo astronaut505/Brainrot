@@ -23,7 +23,18 @@ def call_qwen_model(key=None,
                                 incremental_output=False  # 增量式流式输出
                                 )
     print(responses)
-    return responses['output']['choices'][0]['message']['content']
+    
+    # Error handling: check if response is None or contains errors
+    if responses is None:
+        return "Error: No response from Qwen API. Please check your API key and network connection."
+    
+    if hasattr(responses, 'status_code') and responses.status_code != 200:
+        return f"Error: API returned status {responses.status_code}. {getattr(responses, 'message', 'Unknown error')}"
+    
+    try:
+        return responses['output']['choices'][0]['message']['content']
+    except (KeyError, TypeError, IndexError) as e:
+        return f"Error: Failed to parse API response. {str(e)}"
 
 
 if __name__ == '__main__':

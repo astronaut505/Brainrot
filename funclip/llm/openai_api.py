@@ -51,4 +51,9 @@ def openai_call(apikey,
         model=model,
     )
     logging.info("Openai model inference done.")
-    return chat_completion.choices[0].message.content
+    
+    try:
+        return chat_completion.choices[0].message.content
+    except (AttributeError, IndexError) as e:
+        logging.error(f"Error parsing OpenAI response: {str(e)}")
+        return f"Error: Failed to parse OpenAI response. {str(e)}"

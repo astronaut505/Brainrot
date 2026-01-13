@@ -27,4 +27,7 @@ def g4f_openai_call(model="gpt-3.5-turbo",
         model=model,
         messages=messages,
     )
-    return(response.choices[0].message.content)
+    try:
+        return response.choices[0].message.content
+    except (AttributeError, IndexError) as e:
+        return f"Error: G4F API call failed. {str(e)}"
