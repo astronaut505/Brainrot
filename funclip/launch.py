@@ -3,11 +3,42 @@
 # Copyright FunASR (https://github.com/alibaba-damo-academy/FunClip). All Rights Reserved.
 #  MIT License  (https://opensource.org/licenses/MIT)
 
-from http import server
+# Suppress verbose output from dependencies BEFORE importing them
 import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Suppress TensorFlow logging
+os.environ['LIBROSA_CACHE_DIR'] = os.path.expanduser('~/.cache/librosa')
+
+from http import server
 import logging
 import argparse
+import warnings
 import gradio as gr
+
+# Configure logging to suppress asyncio and other verbose messages
+logging.basicConfig(level=logging.WARNING, format='%(levelname)s:%(name)s:%(message)s')
+logging.getLogger('asyncio').setLevel(logging.ERROR)
+logging.getLogger('librosa').setLevel(logging.ERROR)
+logging.getLogger('modelscope').setLevel(logging.CRITICAL)  # Suppress modelscope messages
+logging.getLogger('funasr').setLevel(logging.INFO)  # Only INFO and above
+logging.getLogger('root').setLevel(logging.INFO)  # Suppress root logger trust_remote_code messages
+
+# Suppress tqdm progress bars from funasr/librosa
+os.environ['TQDM_DISABLE'] = '1'
+
+# Suppress warnings from dependencies
+warnings.filterwarnings('ignore')
+
+# Custom filter to suppress asyncio connection errors
+class AsyncioFilter(logging.Filter):
+    def filter(self, record):
+        # Suppress asyncio ConnectionResetError messages
+        if 'ConnectionResetError' in record.getMessage() or '_call_connection_lost' in record.getMessage():
+            return False
+        return True
+
+asyncio_logger = logging.getLogger('asyncio')
+asyncio_logger.addFilter(AsyncioFilter())
+
 from funasr import AutoModel
 from videoclipper import VideoClipper
 from llm.openai_api import openai_call
@@ -15,6 +46,41 @@ from llm.qwen_api import call_qwen_model
 from llm.g4f_openai_api import g4f_openai_call
 from utils.trans_utils import extract_timestamps
 from introduction import top_md_1, top_md_3, top_md_4
+
+# Configure MoviePy for ImageMagick on Windows
+import shutil
+try:
+    import moviepy.config as mpy_config
+
+    # Try to find magick in PATH (most reliable method)
+    magick_path = shutil.which('magick')
+    if magick_path:
+        mpy_config.change_settings({"IMAGEMAGICK_BINARY": magick_path})
+        logging.info(f"[CONFIG] ImageMagick configured at: {magick_path}")
+    else:
+        # Fallback: try common installation paths
+        import platform
+        if platform.system() == 'Windows':
+            possible_paths = [
+                r'C:\Program Files\ImageMagick-7.1.2\magick.exe',
+                r'C:\Program Files\ImageMagick-7.1.1\magick.exe',
+                r'C:\Program Files\ImageMagick-7.1.0\magick.exe',
+                r'C:\Program Files (x86)\ImageMagick-7.1.2\magick.exe',
+                r'C:\Program Files (x86)\ImageMagick-7.1.1\magick.exe',
+                r'C:\Program Files (x86)\ImageMagick-7.1.0\magick.exe',
+                r'C:\Program Files\ImageMagick-7.0\magick.exe',
+            ]
+            found = False
+            for path in possible_paths:
+                if os.path.exists(path):
+                    mpy_config.change_settings({"IMAGEMAGICK_BINARY": path})
+                    logging.info(f"[CONFIG] ImageMagick configured at: {path}")
+                    found = True
+                    break
+            if not found:
+                logging.warning("[CONFIG] ImageMagick not found in PATH or common paths. Subtitles will be skipped.")
+except Exception as e:
+    logging.warning(f"[CONFIG] Could not configure ImageMagick: {e}")
 
 
 if __name__ == "__main__":
@@ -137,6 +203,9 @@ if __name__ == "__main__":
 
     def AI_clip(LLM_res, dest_text, video_spk_input, start_ost, end_ost, video_state, audio_state, output_dir):
         logging.info(f"[DEBUG_AICLIP_NOSUB_START] LLM_res: {LLM_res}")
+        logging.info(f"[DEBUG_AICLIP_STATE_CHECK] video_state type: {type(video_state)}, audio_state type: {type(audio_state)}")
+        logging.info(f"[DEBUG_AICLIP_STATE_VALUE] video_state value: {video_state}, audio_state value: {audio_state}")
+
         timestamp_list = extract_timestamps(LLM_res)
         logging.info(f"[DEBUG_AICLIP_NOSUB_TIMESTAMPS] len: {len(timestamp_list) if timestamp_list else 0}")
         output_dir = output_dir.strip()

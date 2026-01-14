@@ -5,7 +5,7 @@
 
 import os
 import re
-import numpy as np  
+import numpy as np
 
 PUNC_LIST = ['，', '。', '！', '？', '、', ',', '.', '?', '!']
 
@@ -39,7 +39,7 @@ def proc(raw_text, timestamp, dest_text, lang='zh'):
         mi.append(fi)
         ts.append([timestamp[ti][0]*16, timestamp[ti+ld-1][1]*16])
     return ts
-            
+
 
 def proc_spk(dest_spk, sd_sentences):
     ts = []
@@ -106,21 +106,21 @@ def convert_pcm_to_float(data):
     return (data.astype(np.float64) / max_int_value)
 
 def convert_time_to_millis(time_str):
-    # 格式: [小时:分钟:秒,毫秒]
-    hours, minutes, seconds, milliseconds = map(int, re.split('[:,]', time_str))
+    # Format: HH:MM:SS.mmm or HH:MM:SS,mmm (handles both dot and comma as separator)
+    hours, minutes, seconds, milliseconds = map(int, re.split('[:\.,]', time_str))
     return (hours * 3600 + minutes * 60 + seconds) * 1000 + milliseconds
 
 def extract_timestamps(input_text):
-    # 使用正则表达式查找所有时间戳
-    timestamps = re.findall(r'\[(\d{2}:\d{2}:\d{2},\d{2,3})\s*-\s*(\d{2}:\d{2}:\d{2},\d{2,3})\]', input_text)
+    # Use regex to find all timestamps - supports both comma and dot as separator
+    # Matches patterns like [00:00:59.420-00:01:33.540] or [00:00:00,500-00:00:05,850]
+    timestamps = re.findall(r'\[(\d{2}:\d{2}:\d{2}[.,]\d{2,3})\s*-\s*(\d{2}:\d{2}:\d{2}[.,]\d{2,3})\]', input_text)
     times_list = []
-    print(timestamps)
-    # 循环遍历找到的所有时间戳，并转换为毫秒
+    # Process all found timestamps and convert to milliseconds
     for start_time, end_time in timestamps:
         start_millis = convert_time_to_millis(start_time)
         end_millis = convert_time_to_millis(end_time)
         times_list.append([start_millis, end_millis])
-    
+
     return times_list
 
 
