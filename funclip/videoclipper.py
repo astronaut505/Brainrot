@@ -77,134 +77,71 @@ class VideoClipper():
         video_clip = video_clip.crop(x1=crop_x, y1=crop_y, x2=crop_x+new_w, y2=crop_y+new_h)
         return video_clip
 
-    def _crop_face_aware(self, video_clip, target_aspect):
-        """Intelligently crop video to TikTok format, favoring face/content areas.
-        Uses multi-frame sampling to ensure faces stay centered throughout the video."""
-        try:
-            try:
-                import cv2
-            except ImportError as ie:
-                logging.warning(f"[CROP] OpenCV not available: {ie}, falling back to center crop")
-                return self._crop_center(video_clip, target_aspect)
+    def _crop_center(self, video_clip, target_aspect):
+        """Simple center crop to target aspect ratio (9:16 for TikTok)"""
+        w, h = video_clip.w, video_clip.h
+        current_aspect = w / h
 
-            w, h = video_clip.w, video_clip.h
-            current_aspect = w / h
+        if current_aspect > target_aspect:
+            # Video is wider than target - crop width
+            new_w = int(h * target_aspect)
+            new_h = h
+            crop_x = (w - new_w) // 2
+            crop_y = 0
+        else:
+            # Video is taller than target - crop height
+            new_w = w
+            new_h = int(w / target_aspect)
+            crop_x = 0
+            crop_y = (h - new_h) // 2
 
-            # Multi-frame sampling approach: Sample 5 frames throughout the video
-            sample_times = [
-                video_clip.duration * 0.10,   # 10%
-                video_clip.duration * 0.30,   # 30%
-                video_clip.duration * 0.50,   # 50%
-                video_clip.duration * 0.70,   # 70%
-                video_clip.duration * 0.90,   # 90%
-            ]
-
-            all_faces = []
-            face_cascade = cv2.CascadeClassifier(
-                cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-            )
-
-            # Detect faces in all sampled frames with relaxed parameters for better detection
-            for sample_time in sample_times:
-                try:
-                    frame = video_clip.get_frame(sample_time)
-                    frame_cv = cv2.cvtColor((frame * 255).astype('uint8'), cv2.COLOR_RGB2GRAY)
-                    # More relaxed detection: scaleFactor=1.05 is more sensitive, minNeighbors=3 catches more faces
-                    faces = face_cascade.detectMultiScale(frame_cv, scaleFactor=1.05, minNeighbors=3, minSize=(20, 20))
-                    if len(faces) > 0:
-                        all_faces.extend(faces)
-                except Exception as frame_err:
-                    logging.debug(f"[CROP] Could not process frame at {sample_time}: {frame_err}")
-                    continue
-
-            if len(all_faces) > 0:
-                # Found faces - use the largest face as reference (usually the main subject)
-                all_faces = np.array(all_faces)
-                face_areas = all_faces[:, 2] * all_faces[:, 3]  # width * height
-                largest_face_idx = np.argmax(face_areas)
-                fx, fy, fw, fh = all_faces[largest_face_idx]
-
-                # Calculate the region we want to keep (face + margins)
-                face_center_x = int(fx + fw / 2)
-                face_center_y = int(fy + fh / 2)
-                face_left = int(fx)
-                face_right = int(fx + fw)
-                face_top = int(fy)
-                face_bottom = int(fy + fh)
-
-                logging.info(f"[CROP] Main face detected at x={face_center_x}, y={face_center_y}, size={fw}x{fh}")
-
-                # Determine crop area ensuring face is well-positioned
-                if current_aspect > target_aspect:
-                    # Wider than target - crop width
-                    new_w = int(h * target_aspect)
-                    new_h = h
-
-                    # Position crop: keep face visible with good margins
-                    # Try to place face at 35% from left edge (not dead center, gives room to frame)
-                    crop_x = face_center_x - int(new_w * 0.35)
-                    # Ensure face is fully visible: left edge must be at least 50px from crop boundary
-                    min_crop_x = face_left - int(new_w * 0.25)
-                    max_crop_x = face_right + int(new_w * 0.25) - new_w
-                    crop_x = max(min_crop_x, min(crop_x, max_crop_x))
-                    crop_x = max(0, min(crop_x, w - new_w))
-                    crop_y = 0
-                else:
-                    # Taller than target - crop height
-                    new_w = w
-                    new_h = int(w / target_aspect)
-                    crop_x = 0
-
-                    # Position crop: keep face visible with good margins
-                    # Try to place face at 35% from top (upper-middle for better framing)
-                    crop_y = face_center_y - int(new_h * 0.35)
-                    # Ensure face is fully visible: top edge must have margin
-                    min_crop_y = face_top - int(new_h * 0.25)
-                    max_crop_y = face_bottom + int(new_h * 0.25) - new_h
-                    crop_y = max(min_crop_y, min(crop_y, max_crop_y))
-                    crop_y = max(0, min(crop_y, h - new_h))
-
-                logging.info(f"[CROP] Face-aware crop: x={crop_x}, y={crop_y}, size={new_w}x{new_h}")
-                video_clip = video_clip.crop(x1=crop_x, y1=crop_y, x2=crop_x+new_w, y2=crop_y+new_h)
-                return video_clip
-            else:
-                # No faces found - use upward bias (where content usually is)
-                logging.info("[CROP] No faces detected across samples, using content-aware crop (upper bias)")
-                if current_aspect > target_aspect:
-                    new_w = int(h * target_aspect)
-                    new_h = h
-                    crop_x = (w - new_w) // 2
-                    crop_y = 0
-                else:
-                    new_w = w
-                    new_h = int(w / target_aspect)
-                    crop_x = 0
-                    crop_y = max(0, int(h * 0.1))  # Shift up 10% - capture upper content
-
-                video_clip = video_clip.crop(x1=crop_x, y1=crop_y, x2=crop_x+new_w, y2=crop_y+new_h)
-                return video_clip
-
-        except Exception as e:
-            logging.warning(f"[CROP] Face-aware crop failed ({type(e).__name__}), falling back to center crop")
-            return self._crop_center(video_clip, target_aspect)
+        logging.info(f"[CROP] Center crop applied: {new_w}x{new_h} at ({crop_x}, {crop_y})")
+        video_clip = video_clip.crop(x1=crop_x, y1=crop_y, x2=crop_x+new_w, y2=crop_y+new_h)
+        return video_clip
 
     def resize_to_tiktok(self, video_clip):
-        """Crop and resize video to TikTok format (9:16 aspect ratio, 1080x1920)"""
+        """Create 9:16 video with image background and cropped/resized clip centered"""
         try:
+            from moviepy.editor import ImageClip
+
             target_w, target_h = 1080, 1920
-            target_aspect = target_w / target_h  # 0.5625
 
-            # Try face-aware cropping first, fallback to center crop
-            video_clip = self._crop_face_aware(video_clip, target_aspect)
+            # Crop 15% from left and right sides
+            crop_percent = 0.15
+            crop_left = int(video_clip.w * crop_percent)
+            crop_right = int(video_clip.w * (1 - crop_percent))
+            video_clip = video_clip.crop(x1=crop_left, x2=crop_right)
 
-            # Resize to final TikTok dimensions (1080x1920)
-            video_clip = video_clip.resize((target_w, target_h))
+            # Resize cropped clip to fill the frame width while maintaining aspect ratio
+            # The cropped clip is now narrower, so resize it to match target width
+            aspect_ratio = video_clip.h / video_clip.w
+            new_w = target_w
+            new_h = int(target_w * aspect_ratio)
+            video_clip = video_clip.resize((new_w, new_h))
 
-            logging.info("Video cropped and resized to TikTok format (1080x1920)")
-            return video_clip
+            # Center vertically
+            y_position = (target_h - new_h) / 2
+            video_clip_positioned = video_clip.set_position((0, y_position))
+
+            logging.info(f"Cropped and resized: {video_clip.w}x{video_clip.h}")
+
+            # Load image as background
+            image_path = os.path.join(os.getcwd(), 'image.png')
+            if os.path.exists(image_path):
+                background = ImageClip(image_path).set_duration(video_clip.duration)
+                background = background.resize((target_w, target_h))
+                from moviepy.editor import CompositeVideoClip
+                result = CompositeVideoClip([background, video_clip_positioned], size=(target_w, target_h))
+            else:
+                # No background image - just resize to fit frame
+                from moviepy.editor import ColorClip, CompositeVideoClip
+                background = ColorClip(size=(target_w, target_h), color=(0, 0, 0)).set_duration(video_clip.duration)
+                result = CompositeVideoClip([background, video_clip_positioned], size=(target_w, target_h))
+
+            return result
         except Exception as e:
-            logging.error(f"Error resizing to TikTok format: {str(e)}")
-            return video_clip  # Return original if resize fails
+            logging.error(f"Error creating 9:16 video: {str(e)}")
+            return video_clip
 
 
     def recog(self, audio_input, sd_switch='no', state=None, hotwords="", output_dir=None):
@@ -451,28 +388,50 @@ class VideoClipper():
             # Save each clip segment separately
             clip_video_files = []
             for seg_idx, video_segment in enumerate(concate_clip, 1):
-                # Resize to TikTok format for each segment
-                resized_clip = self.resize_to_tiktok(video_segment)
-
-                # Add subtitles AFTER cropping so they're sized for the final frame
+                # Add subtitles to original clip BEFORE compositing (for correct positioning)
+                final_clip = video_segment
                 if hasattr(video_segment, '_subs_to_add'):
                     subs_data, should_add_sub = video_segment._subs_to_add
                     if should_add_sub and subs_data:
                         try:
-                            # Create TextClip with center alignment, using responsive width based on cropped dimensions
-                            # Width is 90% of cropped video width with 5% padding on each side
-                            text_width = int(resized_clip.w * 0.90)
-                            generator = lambda txt: TextClip(txt, font=self.font_path, fontsize=font_size, color=font_color, align='center', method='caption', size=(text_width, None))
+                            # Create TextClip with center alignment
+                            # Width is 60% of original video width (20% margin left, 20% margin right)
+                            text_width = int(video_segment.w * 0.60)
+                            # Generator with original format (no stroke)
+                            generator = lambda txt: TextClip(
+                                txt,
+                                font=self.font_path,
+                                fontsize=font_size,
+                                color=font_color,
+                                align='center',
+                                method='caption',
+                                size=(text_width, None)
+                            )
                             subtitles = SubtitlesClip(subs_data, generator)
-                            # Position subtitles in middle of bottom half: 65% from top of cropped frame
-                            resized_clip = CompositeVideoClip([resized_clip, subtitles.set_pos(('center', 0.65), relative=True)])
+                            # Position subtitles in bottom quarter of original clip, centered
+                            subtitles = subtitles.set_pos(('center', 0.75), relative=True)
+                            # Composite subtitles on original clip
+                            final_clip = CompositeVideoClip([video_segment, subtitles])
                         except Exception as e:
                             logging.warning(f"Subtitles skipped for segment {seg_idx} (ImageMagick may not be installed): {type(e).__name__}")
+
+                # Resize to TikTok format with background (now includes subtitled clip)
+                resized_clip = self.resize_to_tiktok(final_clip)
 
                 output_file = os.path.join(output_dir, "{}_segment_{}.mp4".format(clip_video_file_name, seg_idx))
                 temp_audio_file = os.path.join(output_dir, "{}_tempaudio_{}.mp4".format(clip_video_file_name, seg_idx))
                 logging.info(f"Saving clip segment {seg_idx}/{len(concate_clip)} to: {output_file}")
-                resized_clip.write_videofile(output_file, audio_codec="aac", temp_audiofile=temp_audio_file, verbose=False, logger=None)
+                # Optimize for fast encoding with good quality
+                resized_clip.write_videofile(
+                    output_file,
+                    codec='libx264',
+                    audio_codec="aac",
+                    temp_audiofile=temp_audio_file,
+                    verbose=False,
+                    logger=None,
+                    preset='ultrafast',  # Use ultrafast preset for maximum speed
+                    ffmpeg_params=['-crf', '28']  # Adjust quality (lower=better, 0-51, default 23)
+                )
                 clip_video_files.append(output_file)
                 self.GLOBAL_COUNT += 1
 
